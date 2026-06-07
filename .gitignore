@@ -12,3 +12,9 @@ __pycache__/
 # 虚拟环境
 venv/
 .venv/
+
+# 数据文件
+backend/data/
+
+# Claude
+.claude/

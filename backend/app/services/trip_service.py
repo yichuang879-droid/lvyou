@@ -1,7 +1,8 @@
 from uuid import uuid4
 from app.schemas import TripGenerateRequest, TripPlan, DailyPlan
 
-from app.storage.memory_store import save_trip
+from app.storage.memory_store import save_trip, list_trips
+
 
 
 def generate_trip(req: TripGenerateRequest) -> TripPlan:
@@ -29,3 +30,6 @@ def generate_trip(req: TripGenerateRequest) -> TripPlan:
 
     save_trip(plan)
     return plan
+
+def get_history() -> list[TripPlan]:
+    return list_trips()

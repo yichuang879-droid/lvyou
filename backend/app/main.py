@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from app.schemas import TripGenerateRequest, TripPlan
-from app.services.trip_service import generate_trip
-from app.storage.memory_store import get_trip, list_trips, delete_trip
+from app.services.trip_service import generate_trip,get_history
+from app.storage.memory_store import get_trip, delete_trip
 
 app = FastAPI(title="旅游规划助手 Backend MVP")
 
@@ -18,7 +18,7 @@ def create_trip(req: TripGenerateRequest):
 
 @app.get("/trip/history")
 def history():
-    return list_trips()
+    return get_history()
 
 
 @app.get("/trip/{trip_id}", response_model=TripPlan)
