@@ -1,73 +1,104 @@
 """
-行程服务 —— 核心业务逻辑。
+行程服务 —— 业务编排。
 
-当前骨架：
-  generate_trip()  生成旅行计划（占位模版，后续接入 LLM）
-  get_history()    获取全部历史行程
-  get_detail()     按 ID 查询单条行程
-  delete_trip()    删除指定行程
+当前状态：
+  generate_trip_itinerary() — 占位实现（等用户接 agent 层后替换）
+  edit_trip_itinerary()     — 占位实现（同上）
 """
-from uuid import uuid4
+from datetime import date as DateType, timedelta
+from app.models.schemas import (
+    BudgetBreakdown, DayPlan, HotelItem, Itinerary, MealItem,
+    SpotItem, TokenUsage, TransportItem,
+    TripEditRequest, TripRequest,
+)
+from app.config import ENABLE_AMAP_ENRICHMENT
+from app.services.map_service import enrich_itinerary_with_map_data
 
-from fastapi import HTTPException
 
-from app.schemas import TripGenerateRequest, TripPlan, DailyPlan
-from app.storage.memory_store import save_trip, list_trips, get_trip as _storage_get
-from app.storage.memory_store import delete_trip as _storage_delete
+def _maybe_enrich(itinerary: Itinerary, city: str | None = None, budget: float | None = None) -> Itinerary:
+    """按开关补充地图信息。"""
+    if ENABLE_AMAP_ENRICHMENT:
+        try:
+            itinerary = enrich_itinerary_with_map_data(itinerary, city=city)
+        except Exception:
+            pass
+    return itinerary
 
 
-def generate_trip(req: TripGenerateRequest) -> TripPlan:
-    """根据用户请求生成一份旅行计划。
+def generate_trip_itinerary(request: TripRequest) -> Itinerary:
+    """生成完整 itinerary（当前为占位实现，等 agent 层替换）。
 
-    当前为占位实现——生成为每一天的固定模版文字。
-    后续步骤：
-      1. 用 req 的字段拼成 prompt
-      2. 调 LLM（DashScope / qwen-plus）
-      3. 解析 LLM 返回的 JSON → TripPlan
-
-    参数: req — Pydantic 校验后的请求体
-    返回: TripPlan 对象（含 trip_id + 每日行程）
+    用户接入步骤：
+      1. 在 app/agents/ 下创建 trip_planner_agent.py
+      2. 实现 plan_trip(request) -> Itinerary
+      3. 把本函数的占位代码替换为调用 agent
     """
-    itinerary = []
-    for i in range(1, req.days + 1):
-        itinerary.append(
-            DailyPlan(
-                day=i,
-                title=f"{req.destination}第{i}天行程",
-                morning=f"上午游览{req.destination}代表性景点",
-                afternoon=f"下午体验当地美食与街区",
-                evening=f"晚上自由活动或夜景散步",
-                tips=["注意根据天气调整安排", "提前确认景点开放时间"],
-            )
-        )
+    day_count = (request.end_date - request.start_date).days + 1
+    day_count = max(day_count, 1)
+    days: list[DayPlan] = []
 
-    plan = TripPlan(
-        trip_id=str(uuid4()),   # 生成全局唯一 ID
-        destination=req.destination,
-        days=req.days,
-        summary=f"这是一个{req.days}天的{req.destination}旅行计划。",
-        itinerary=itinerary,
+    for i in range(day_count):
+        day_number = i + 1
+        current_date = request.start_date + timedelta(days=i)
+        spot_name = f"{request.destination} 推荐景点 {day_number}"
+        days.append(DayPlan(
+            day_index=day_number,
+            date=current_date,
+            theme=f"{request.destination} 第 {day_number} 天轻松游",
+            spots=[SpotItem(
+                name=spot_name,
+                start_time="10:00", end_time="12:00",
+                description="根据本地攻略和旅行偏好安排，适合用半天时间慢慢游览。",
+                estimated_cost=50.0,
+                location=request.destination,
+            )],
+            meals=[MealItem(
+                name=f"{request.destination} 特色餐饮 {day_number}",
+                meal_type="午餐",
+                estimated_cost=80.0,
+                notes="根据用户偏好和本地攻略预留的餐饮建议。",
+            )],
+            hotel=HotelItem(
+                name=f"{request.destination} {request.hotel_level or '舒适型'}住宿 {day_number}",
+                level=request.hotel_level or "舒适型",
+                estimated_cost=400.0,
+                location=f"{request.destination} 市区",
+            ),
+            transport=[TransportItem(
+                mode="打车",
+                from_place=f"{request.destination} 出发点",
+                to_place=spot_name,
+                estimated_cost=30.0,
+                duration="30 分钟",
+            )],
+            notes=[f"当前旅行节奏：{request.pace or '适中'}", "今天以轻松游览为主。"],
+        ))
+
+    preference_text = "、".join(request.preferences) if request.preferences else "常规旅行体验"
+    itinerary = Itinerary(
+        trip_id=f"trip_{request.destination}_{request.start_date.isoformat()}",
+        destination=request.destination,
+        summary=f"这是一份为 {request.destination} 生成的 {day_count} 日行程，偏好重点为：{preference_text}。",
+        days=days,
+        estimated_budget=request.budget,
+        budget_breakdown=BudgetBreakdown(
+            transport=day_count * 30, hotel=day_count * 400,
+            meals=day_count * 80, tickets=day_count * 50,
+            other=request.budget * 0.05, total=request.budget,
+        ),
+        tips=[
+            f"建议根据{request.destination}当天实时天气准备雨具或薄外套。",
+            "古镇、生态廊道和石板路更适合慢慢走，鞋子尽量选择舒适防滑的款式。",
+        ],
+        source_notes=["[占位] Itinerary 由 trip_service 规则生成，待接入 agent。"],
+        token_usage=TokenUsage(),
     )
-
-    save_trip(plan)  # 持久化到 SQLite
-    return plan
+    return _maybe_enrich(itinerary, city=request.destination, budget=request.budget)
 
 
-def get_history() -> list[TripPlan]:
-    """返回所有历史旅行计划（最新在前）。"""
-    return list_trips()
-
-
-def get_detail(trip_id: str) -> TripPlan:
-    """按 trip_id 查单条行程，不存在则抛 404。"""
-    trip = _storage_get(trip_id)
-    if trip is None:
-        raise HTTPException(status_code=404, detail="行程不存在")
-    return trip
-
-
-def delete_trip(trip_id: str) -> dict:
-    """按 trip_id 删除行程，不存在则抛 404。"""
-    if not _storage_delete(trip_id):
-        raise HTTPException(status_code=404, detail="要删除的行程不存在")
-    return {"deleted": True}
+def edit_trip_itinerary(request: TripEditRequest) -> Itinerary:
+    """根据用户编辑指令返回更新后的 itinerary（占位）。"""
+    updated = request.current_itinerary.model_copy(deep=True)
+    updated.source_notes.append(f"已根据用户编辑指令更新行程：{request.user_instruction}")
+    updated.tips.append("已根据你的修改要求更新目标日期，出发前建议再确认当天交通、天气和景点开放情况。")
+    return _maybe_enrich(updated, city=updated.destination)

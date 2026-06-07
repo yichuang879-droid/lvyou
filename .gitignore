@@ -13,8 +13,12 @@ __pycache__/
 venv/
 .venv/
 
-# 数据文件
-backend/data/
-
 # Claude
 .claude/
+
+# 前端
+frontend/node_modules/
+frontend/dist/
+
+# SQLite 运行时数据库
+*.db
